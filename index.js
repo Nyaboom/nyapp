@@ -2,7 +2,7 @@ const http = require("node:https");
 const tls = require("node:tls");
 const net = require("node:net");
 const { randomBytes } = require('crypto');
-const { token } = require("./token");
+const { token, welcomeChannel } = require("./config");
 const EventEmitter = require("node:events");
 let url = new URL("wss://gateway.discord.gg/?v=10&encoding=json");
 
@@ -144,7 +144,7 @@ function onReceive({data, event}) {
     switch (event) {
         case "READY":
             console.log("Bot is ready!")
-            sendMessage("1131618506824241295", { content: "Bot is ready!" });
+            sendMessage(welcomeChannel, { content: "Bot is ready!" });
             break;
         case "MESSAGE_CREATE":
             if (data.content?.startsWith?.(pronoun + " ")) {
