@@ -33,6 +33,7 @@ function extract(buffer) {
     let thing = buffer[1] % 128;
     let length = thing == 126 ? buffer.readUInt16BE(2) : thing;
     let start = thing == 126 ? 4 : 2;
+    console.log("extracting ws message", { opcode, thing, length });
 
 	let payload = buffer.slice(start, start + length);
     let error;
@@ -41,7 +42,7 @@ function extract(buffer) {
 		payload = payload.slice(2);
     }
 
-	return { opcode, message: payload.toString(), ...(error && { error }) };
+	return { opcode, message: payload.toString(), ...(error && { error }), ...(payload.length != length && { missing: true }) };
 }
 
 let hello_payload = JSON.stringify({
@@ -131,9 +132,17 @@ req.on('upgrade', (res, socket, head) => {
         console.log("payload", payload.replaceAll(token, "TOKEN"));
         socket.write(creat(payload));
     });
+    let buffered = null;
     socket.on("data", data => {
-        let info = extract(data);
+        let info = buffered ? 
+            { ...buffered, message: buffered.message + data.toString(), missing: false } : 
+            extract(data);
         console.log(info);
+        if (info.missing) {
+            buffered = info;
+            return;
+        }
+        buffered = null;
         if (info.opcode == 1) {
             try {
                 let stuff = JSON.parse(info.message);
