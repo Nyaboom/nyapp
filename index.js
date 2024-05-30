@@ -4,6 +4,7 @@ const net = require("node:net");
 const { randomBytes } = require('crypto');
 const { token, welcomeChannel } = require("./config");
 const EventEmitter = require("node:events");
+const { registerGlobalCommand, sendInteractionResponse } = require("./commands");
 let url = new URL("wss://gateway.discord.gg/?v=10&encoding=json");
 
 function creat(data) {
@@ -67,6 +68,7 @@ let hello_payload = JSON.stringify({
         }
     }
 });
+let seq = null;
 
 function tlsConnect(options) {
     options.path = undefined;
@@ -133,35 +135,166 @@ req.on('upgrade', (res, socket, head) => {
         let info = extract(data);
         console.log(info);
         if (info.opcode == 1) {
-            let stuff = JSON.parse(info.message);
-            bot.emit("receive", stuff);
+            try {
+                let stuff = JSON.parse(info.message);
+                bot.emit("receive", stuff);
+            } catch {
+                console.log("ERROR! Couldn't parse message as JSON... Here's the data:", info);
+            }
         }
     });
 });
 req.end();
+
+async function registerCommands() {
+    await registerGlobalCommand({
+        name: "board",
+        type: 1,
+        description: "Create a board",
+        contexts: [0, 1, 2],
+        integration_types: [0, 1],
+        options: []
+    });
+    await registerGlobalCommand({
+        name: "poll",
+        type: 1,
+        description: "Create an anonymous poll",
+        contexts: [0, 1, 2],
+        integration_types: [0, 1],
+        options: [
+            {
+                name: "title",
+                description: "Poll title",
+                type: 3,
+                required: true,
+                min_length: 1,
+            }
+        ]
+    });
+    bot.on("interaction", (interaction) => {
+        if (interaction.data.name === "board") {
+            let i = 0;
+            let gc = () => ({
+                "type": 2,
+                "label": "­",
+                "style": 1,
+                "custom_id": `${i++}`
+            })
+            let ro = () => ({
+                type: 1,
+                components: [
+                    gc(),
+                    gc(),
+                    gc(),
+                ]
+            });
+            console.log(interaction);
+            sendInteractionResponse(interaction, {
+                type: 4,
+                data: {
+                    content: "hi",
+                    components: [
+                        ro(),
+                        ro(),
+                        ro(),
+                    ]
+                }
+            }).then( response => {
+                console.log("Interaction response\n", response);
+            });
+        }
+        else if (interaction.data.name === "poll") {
+            let i = 0;
+            console.log("poll");
+            sendInteractionResponse(interaction, {
+                type: 4,
+                data: {
+                    content: "",
+                    embeds: [
+                        {
+                            id: i++,
+                            title: "Anonymous poll",
+                            description: interaction.data.options.find(e => e.name == "title").value,
+                            color: 0,
+                            fields: []
+                        }
+                    ],
+                    components: [
+                        {
+                            type: 1,
+                            components: [
+                                {
+                                    type: 2,
+                                    label: "Yes",
+                                    style: 1,
+                                    custom_id: "yes"
+                                },
+                                {
+                                    type: 2,
+                                    label: "No",
+                                    style: 4,
+                                    custom_id: "no"
+                                },
+                            ]
+                        }
+                    ]
+                }
+            });
+        } else {
+            if (interaction.data.custom_id == "yes") {
+                console.log("yes", interaction);
+                sendInteractionResponse(interaction, {
+                    type: 4,
+                    data: {
+                        content: "Test (you voted yes)"
+                    }
+                });
+            } else if (interaction.data.custom_id == "no") {
+                sendInteractionResponse(interaction, {
+                    type: 4,
+                    data: {
+                        content: "Test (you voted no)"
+                    }
+                });
+            }
+        }
+    });
+}
+
 let pronoun = "nya";
 function onReceive({data, event}) {
     switch (event) {
         case "READY":
-            console.log("Bot is ready!")
+            console.log("Bot is ready!");
             sendMessage(welcomeChannel, { content: "Bot is ready!" });
+            registerCommands();
             break;
         case "MESSAGE_CREATE":
             if (data.content?.startsWith?.(pronoun + " ")) {
                 let [cmd, ...args] = data.content.slice((pronoun + " ").length).split(" ");
                 if (cmd == "eval") {
-                    sendMessage(data.channel_id, { content: eval(args.join(" ")) });
+                    // sendMessage(data.channel_id, { content: eval(args.join(" ")) });
+                    // disabled due to secutiry risk
                 }
             }
+            break;
+        case "INTERACTION_CREATE":
+            bot.emit("interaction", data);
             break;
     }
 }
 
 bot.on("receive", data => {
+    if (data.s) seq = data.s;
     switch (data.op) {
         case 10:
             bot.emit("send", hello_payload);
+            setInterval(() => {
+                bot.emit("send", JSON.stringify({ op: 1, d: seq }));
+            }, data.d.heartbeat_interval);
+            break;
         case 0:
-            onReceive({ event: data.t, data: data.d});
+            onReceive({ event: data.t, data: data.d });
+            break;
     }
 });
