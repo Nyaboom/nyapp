@@ -4,6 +4,7 @@ const net = require("node:net");
 const { randomBytes } = require('crypto');
 const { token, welcomeChannel } = require("./config");
 const EventEmitter = require("node:events");
+const fs = require("node:fs");
 const { registerGlobalCommand, sendInteractionResponse } = require("./commands");
 let url = new URL("wss://gateway.discord.gg/?v=10&encoding=json");
 
@@ -33,7 +34,7 @@ function extract(buffer) {
     let thing = buffer[1] % 128;
     let length = thing == 126 ? buffer.readUInt16BE(2) : thing;
     let start = thing == 126 ? 4 : 2;
-    console.log("extracting ws message", { opcode, thing, length });
+    // console.log("extracting ws message", { opcode, thing, length });
 
 	let payload = buffer.slice(start, start + length);
     let error;
@@ -126,10 +127,10 @@ const bot = new EventEmitter();
 req.on('upgrade', (res, socket, head) => {
     console.log("upgrade");
     socket.on("ready", d => {
-        console.log("ready", d);
+        // console.log("ready", d);
     });
     bot.on("send", payload => {
-        console.log("payload", payload.replaceAll(token, "TOKEN"));
+        // console.log("payload", payload.replaceAll(token, "TOKEN"));
         socket.write(creat(payload));
     });
     let buffered = null;
@@ -137,7 +138,7 @@ req.on('upgrade', (res, socket, head) => {
         let info = buffered ? 
             { ...buffered, message: buffered.message + data.toString(), missing: false } : 
             extract(data);
-        console.log(info);
+        // console.log(info);
         if (info.missing) {
             buffered = info;
             return;
@@ -155,117 +156,27 @@ req.on('upgrade', (res, socket, head) => {
 });
 req.end();
 
-async function registerCommands() {
-    await registerGlobalCommand({
-        name: "board",
+async function register(cmd) {
+    const data = await registerGlobalCommand({
+        name: cmd.name,
         type: 1,
-        description: "Create a board",
+        description: cmd.description,
         contexts: [0, 1, 2],
         integration_types: [0, 1],
         options: []
     });
-    await registerGlobalCommand({
-        name: "poll",
-        type: 1,
-        description: "Create an anonymous poll",
-        contexts: [0, 1, 2],
-        integration_types: [0, 1],
-        options: [
-            {
-                name: "title",
-                description: "Poll title",
-                type: 3,
-                required: true,
-                min_length: 1,
-            }
-        ]
+    if (!data.id) { console.log(`ERROR REGISTERING COMMAND ${cmd.name}`); return };
+    bot.on("interaction", interaction => {
+        cmd.interactions.forEach(fn => fn(interaction, data));
+        if (interaction.data.id !== data.id) return;
+        cmd.run(interaction, data);
     });
-    bot.on("interaction", (interaction) => {
-        if (interaction.data.name === "board") {
-            let i = 0;
-            let gc = () => ({
-                "type": 2,
-                "label": "­",
-                "style": 1,
-                "custom_id": `${i++}`
-            })
-            let ro = () => ({
-                type: 1,
-                components: [
-                    gc(),
-                    gc(),
-                    gc(),
-                ]
-            });
-            console.log(interaction);
-            sendInteractionResponse(interaction, {
-                type: 4,
-                data: {
-                    content: "hi",
-                    components: [
-                        ro(),
-                        ro(),
-                        ro(),
-                    ]
-                }
-            }).then( response => {
-                console.log("Interaction response\n", response);
-            });
-        }
-        else if (interaction.data.name === "poll") {
-            let i = 0;
-            console.log("poll");
-            sendInteractionResponse(interaction, {
-                type: 4,
-                data: {
-                    content: "",
-                    embeds: [
-                        {
-                            id: i++,
-                            title: "Anonymous poll",
-                            description: interaction.data.options.find(e => e.name == "title").value,
-                            color: 0,
-                            fields: []
-                        }
-                    ],
-                    components: [
-                        {
-                            type: 1,
-                            components: [
-                                {
-                                    type: 2,
-                                    label: "Yes",
-                                    style: 1,
-                                    custom_id: "yes"
-                                },
-                                {
-                                    type: 2,
-                                    label: "No",
-                                    style: 4,
-                                    custom_id: "no"
-                                },
-                            ]
-                        }
-                    ]
-                }
-            });
-        } else {
-            if (interaction.data.custom_id == "yes") {
-                console.log("yes", interaction);
-                sendInteractionResponse(interaction, {
-                    type: 4,
-                    data: {
-                        content: "Test (you voted yes)"
-                    }
-                });
-            } else if (interaction.data.custom_id == "no") {
-                sendInteractionResponse(interaction, {
-                    type: 4,
-                    data: {
-                        content: "Test (you voted no)"
-                    }
-                });
-            }
+}
+
+async function registerCommands() {
+    fs.readdir("./commands", (_, files) => {
+        for (let file of files) {
+            register(require(`./commands/${file}`));
         }
     });
 }
